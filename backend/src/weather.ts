@@ -122,19 +122,36 @@ interface TwentyFourHourPayload {
 }
 
 interface FourDayPayload {
-  items?: Array<{
-    update_timestamp?: string;
-    timestamp?: string;
-    forecasts?: Array<{
-      date?: string;
-      timestamp?: string;
-      forecast?: string;
-      temperature?: {
-        low?: number | string;
-        high?: number | string;
+  code?: number;
+  errorMsg?: string;
+  data?: {
+    records?: FourDayItem[];
+  };
+  items?: FourDayItem[];
+}
+
+interface FourDayItem {
+  updatedTimestamp?: string;
+  update_timestamp?: string;
+  timestamp?: string;
+  forecasts?: FourDayForecastRecord[];
+}
+
+interface FourDayForecastRecord {
+  date?: string;
+  day?: string;
+  timestamp?: string;
+  forecast?:
+    | string
+    | {
+        summary?: string;
+        text?: string;
+        code?: string;
       };
-    }>;
-  }>;
+  temperature?: {
+    low?: number | string;
+    high?: number | string;
+  };
 }
 
 export interface ForecastPeriod {
@@ -181,10 +198,54 @@ export class SingaporeWeatherClient {
   ) {}
 
   async getCurrentWeather(latitude: number, longitude: number): Promise<WeatherSnapshot> {
-    const forecastPayload = await this.fetchLatestForecastPayload().catch(() => null);
-    return forecastPayload
+    const nullReading = { value: null, timestamp: null };
+    const nullAirQuality = { psi: null, pm25: null, region: null, timestamp: null };
+    const nullForecast24h = { low: null, high: null, periods: [] as ForecastPeriod[], timestamp: null };
+    const nullForecast4day = { days: [] as DailyForecast[], timestamp: null };
+
+    // api-open.data.gov.sg rate-limits to ~5-6 req/burst. Fire in 3 sequential
+    // batches (forecasts → sensors → air quality) to stay within the limit.
+    const [forecastPayload, forecast24h, forecast4day] = await Promise.all([
+      this.fetchLatestForecastPayload().catch(() => null),
+      this.fetchTwentyFourHourForecast(latitude, longitude).catch(() => nullForecast24h),
+      this.fetchFourDayForecast().catch(() => nullForecast4day),
+    ]);
+
+    await sleep(150);
+
+    const [temperature, humidity, rainfall, windSpeed, windDirection, uvIndex] = await Promise.all([
+      this.fetchNearestReading('air-temperature', latitude, longitude).catch(() => nullReading),
+      this.fetchNearestReading('relative-humidity', latitude, longitude).catch(() => nullReading),
+      this.fetchNearestReading('rainfall', latitude, longitude).catch(() => nullReading),
+      this.fetchNearestReading('wind-speed', latitude, longitude).catch(() => nullReading),
+      this.fetchNearestReading('wind-direction', latitude, longitude).catch(() => nullReading),
+      this.fetchUvIndex().catch(() => nullReading),
+    ]);
+
+    await sleep(150);
+
+    const airQuality = await this.fetchAirQuality(latitude, longitude).catch(() => nullAirQuality);
+
+    const base = forecastPayload
       ? this.snapshotFromPayload(forecastPayload, latitude, longitude)
       : this.emptyForecastSnapshot();
+
+    return {
+      ...base,
+      temperature_c: temperature.value,
+      humidity_percent: humidity.value,
+      rainfall_mm: rainfall.value,
+      wind_speed_knots: windSpeed.value,
+      wind_direction_degrees: windDirection.value,
+      uv_index: uvIndex.value,
+      psi_twenty_four_hourly: airQuality.psi,
+      pm25_one_hourly: airQuality.pm25,
+      air_quality_region: airQuality.region,
+      forecast_low_c: forecast24h.low,
+      forecast_high_c: forecast24h.high,
+      forecast_periods: forecast24h.periods,
+      daily_forecast: forecast4day.days,
+    };
   }
 
   async fetchLatestForecastPayload(): Promise<ForecastPayload> {
@@ -319,17 +380,23 @@ export class SingaporeWeatherClient {
     const payload = await this.fetchJson<FourDayPayload>(
       `${this.legacyApiBaseUrl()}/v1/environment/4-day-weather-forecast`,
     );
-    const item = payload.items?.[0];
+    if (payload.code !== undefined && payload.code !== 0) {
+      throw new WeatherProviderError(
+        payload.errorMsg ?? 'Weather provider returned a 4-day forecast error',
+      );
+    }
+
+    const item = payload.data?.records?.[0] ?? payload.items?.[0];
     return {
       days: (item?.forecasts ?? [])
         .map((forecast) => ({
-          date: forecast.date ?? forecast.timestamp ?? '',
-          forecast: forecast.forecast ?? '',
+          date: forecast.date ?? dateFromTimestamp(forecast.timestamp) ?? forecast.day ?? '',
+          forecast: forecastText(forecast.forecast),
           temperature_low_c: numberOrNull(forecast.temperature?.low),
           temperature_high_c: numberOrNull(forecast.temperature?.high),
         }))
         .filter((forecast) => forecast.date && forecast.forecast),
-      timestamp: item?.update_timestamp ?? item?.timestamp ?? null,
+      timestamp: item?.updatedTimestamp ?? item?.update_timestamp ?? item?.timestamp ?? null,
     };
   }
 
@@ -559,6 +626,22 @@ function valueForRegion(
   return numberOrNull(values[region]);
 }
 
+function forecastText(forecast: FourDayForecastRecord['forecast']): string {
+  if (!forecast) return '';
+  if (typeof forecast === 'string') return forecast;
+  return forecast.summary ?? forecast.text ?? '';
+}
+
+function dateFromTimestamp(timestamp: string | undefined): string | null {
+  if (!timestamp) return null;
+  const parsed = new Date(timestamp);
+  if (Number.isNaN(parsed.getTime())) return timestamp;
+  return timestamp.slice(0, 10);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function defaultRegions(): RegionMetadata[] {
   return [
