@@ -54,7 +54,7 @@ export function SidebarCard({ location, isHome }: SidebarCardProps) {
             >
                 ×
             </button>
-            <div className="flex items-start justify-between gap-3 px-4 pt-3">
+            <div className="flex items-start justify-between gap-3 pl-4 pr-10 pt-3">
                 <div className="min-w-0">
                     <div className="truncate text-lg font-semibold leading-tight text-white">
                         {area}
