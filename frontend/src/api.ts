@@ -10,6 +10,15 @@ interface ApiError {
     detail?: string;
 }
 
+export class ApiRequestError extends Error {
+    constructor(
+        message: string,
+        readonly status: number
+    ) {
+        super(message);
+    }
+}
+
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
     const response = await fetch(`${API_BASE}${endpoint}`, {
         headers: { 'Content-Type': 'application/json', ...options.headers },
@@ -17,7 +26,7 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     });
     if (!response.ok) {
         const error = (await response.json().catch(() => ({}))) as ApiError;
-        throw new Error(error.detail || 'Request failed');
+        throw new ApiRequestError(error.detail || 'Request failed', response.status);
     }
     if (response.status === 204) return null as T;
     return (await response.json()) as T;

@@ -35,6 +35,8 @@ export interface WeatherSnapshot {
 
 export interface Location {
     id: number;
+    canonical_area_key: string;
+    canonical_area_name: string;
     latitude: number;
     longitude: number;
     created_at: string;
@@ -50,12 +52,13 @@ export interface StoreValue {
     locations: Location[];
     selectedId: number | null;
     isAdding: boolean;
+    isCreating: boolean;
     isLoading: boolean;
     refreshingId: number | null;
     error: unknown;
     select: (id: number | null) => void;
     setAdding: (isAdding: boolean) => void;
-    create: (payload: CreateLocationPayload) => Promise<void>;
+    create: (payload: CreateLocationPayload) => Promise<Location>;
     refresh: (id: number) => Promise<void>;
     delete: (id: number) => Promise<void>;
 }

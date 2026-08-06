@@ -4,25 +4,37 @@ import {
     createLocation,
     deleteLocation,
     getLocation,
+    getLocationByCanonicalAreaKey,
     listLocations,
     updateWeather,
 } from '../db.js';
-import { SingaporeWeatherClient, WeatherProviderError, type WeatherSnapshot } from '../weather.js';
+import {
+    AreaResolutionError,
+    SingaporeWeatherClient,
+    WeatherProviderError,
+    type ForecastArea,
+    type WeatherSnapshot,
+} from '../weather.js';
 import { logger } from '../logger.js';
 
 export interface WeatherClient {
     getCurrentWeather(latitude: number, longitude: number): Promise<WeatherSnapshot>;
 }
 
+export interface AreaResolver {
+    resolveForecastArea(latitude: number, longitude: number): Promise<ForecastArea>;
+}
+
 interface LocationsRouterOptions {
     weatherClient?: WeatherClient;
+    areaResolver?: AreaResolver;
 }
 
 export function createLocationsRouter(options: LocationsRouterOptions = {}): Router {
     const router: Router = createRouter();
-    const weatherClient =
-        options.weatherClient ??
-        new SingaporeWeatherClient({ apiKey: process.env.WEATHER_API_KEY });
+    const provider = new SingaporeWeatherClient({ apiKey: process.env.WEATHER_API_KEY });
+    const weatherClient = options.weatherClient ?? provider;
+    const areaResolver = options.areaResolver ?? provider;
 
     router.get('/locations', async (_request, response, next) => {
         try {
@@ -48,7 +60,23 @@ export function createLocationsRouter(options: LocationsRouterOptions = {}): Rou
                 return;
             }
 
-            const location = await createLocation(latitude, longitude);
+            let area: ForecastArea;
+            try {
+                area = await areaResolver.resolveForecastArea(latitude, longitude);
+            } catch (error) {
+                logger.warn(
+                    { err: error instanceof AreaResolutionError ? error : undefined },
+                    'forecast area resolution failed'
+                );
+                response.status(503).json({
+                    detail: 'Forecast-area service is unavailable. Please try again.',
+                    retryable: true,
+                });
+                return;
+            }
+
+            const existing = await getLocationByCanonicalAreaKey(area.key);
+            const location = existing ?? (await createLocation(area));
 
             try {
                 const snapshot = await weatherClient.getCurrentWeather(
@@ -56,21 +84,18 @@ export function createLocationsRouter(options: LocationsRouterOptions = {}): Rou
                     location.longitude
                 );
                 const updated = await updateWeather(location.id, snapshot);
-                response.status(201).json(updated ?? location);
+                response.status(existing ? 200 : 201).json(updated ?? location);
             } catch (error) {
-                if (!(error instanceof WeatherProviderError)) throw error;
                 logger.warn(
-                    { err: error, locationId: location.id },
+                    {
+                        err: error instanceof WeatherProviderError ? error : undefined,
+                        locationId: location.id,
+                    },
                     'weather refresh failed after location create'
                 );
-                response.status(201).json(location);
+                response.status(existing ? 200 : 201).json(location);
             }
         } catch (error) {
-            if (error instanceof Error && error.name === 'DuplicateLocationError') {
-                logger.warn({ err: error }, 'duplicate location rejected');
-                response.status(409).json({ detail: error.message });
-                return;
-            }
             next(error);
         }
     });

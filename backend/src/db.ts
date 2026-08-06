@@ -1,13 +1,15 @@
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { and, desc, eq } from 'drizzle-orm';
+import { desc, eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/sqlite-proxy';
 import { migrate } from 'drizzle-orm/sqlite-proxy/migrator';
 import { locations, type WeatherSnapshot } from './schema.js';
 
 export interface LocationRecord {
     id: number;
+    canonical_area_key: string;
+    canonical_area_name: string;
     latitude: number;
     longitude: number;
     created_at: string;
@@ -64,26 +66,21 @@ export async function listLocations(): Promise<LocationRecord[]> {
     ).map(rowToRecord);
 }
 
-export async function createLocation(latitude: number, longitude: number): Promise<LocationRecord> {
-    const duplicate = await db
-        .select({ id: locations.id })
-        .from(locations)
-        .where(and(eq(locations.latitude, latitude), eq(locations.longitude, longitude)))
-        .get();
-
-    if (duplicate) {
-        const error = new Error('Location already exists');
-        error.name = 'DuplicateLocationError';
-        throw error;
-    }
-
+export async function createLocation(area: {
+    key: string;
+    name: string;
+    latitude: number;
+    longitude: number;
+}): Promise<LocationRecord> {
     const createdAt = new Date().toISOString().slice(0, 19);
-    const weather = weatherToColumns(defaultWeather);
+    const weather = weatherToColumns({ ...defaultWeather, area: area.name });
     const row = await db
         .insert(locations)
         .values({
-            latitude,
-            longitude,
+            canonicalAreaKey: area.key,
+            canonicalAreaName: area.name,
+            latitude: area.latitude,
+            longitude: area.longitude,
             createdAt,
             ...weather,
         })
@@ -91,6 +88,11 @@ export async function createLocation(latitude: number, longitude: number): Promi
         .get();
 
     return rowToRecord(row);
+}
+
+export async function getLocationByCanonicalAreaKey(key: string): Promise<LocationRecord | null> {
+    const row = await db.select().from(locations).where(eq(locations.canonicalAreaKey, key)).get();
+    return row ? rowToRecord(row) : null;
 }
 
 export async function getLocation(id: number): Promise<LocationRecord | null> {
@@ -123,6 +125,10 @@ export async function resetStore(): Promise<void> {
     sqlite.prepare("DELETE FROM sqlite_sequence WHERE name = 'locations'").run();
 }
 
+export function closeStore(): void {
+    sqlite.close();
+}
+
 function weatherToColumns(weather: WeatherSnapshot) {
     return {
         condition: weather.condition,
@@ -149,6 +155,8 @@ function weatherToColumns(weather: WeatherSnapshot) {
 function rowToRecord(row: LocationRow): LocationRecord {
     return {
         id: row.id,
+        canonical_area_key: row.canonicalAreaKey,
+        canonical_area_name: row.canonicalAreaName,
         latitude: row.latitude,
         longitude: row.longitude,
         created_at: row.createdAt,

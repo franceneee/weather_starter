@@ -33,6 +33,8 @@ export const locations = sqliteTable(
     'locations',
     {
         id: integer('id').primaryKey({ autoIncrement: true }),
+        canonicalAreaKey: text('canonical_area_key').notNull(),
+        canonicalAreaName: text('canonical_area_name').notNull(),
         latitude: real('latitude').notNull(),
         longitude: real('longitude').notNull(),
         createdAt: text('created_at').notNull(),
@@ -59,7 +61,5 @@ export const locations = sqliteTable(
             .$type<WeatherSnapshot['daily_forecast']>()
             .notNull(),
     },
-    (table) => [
-        uniqueIndex('locations_latitude_longitude_unique').on(table.latitude, table.longitude),
-    ]
+    (table) => [uniqueIndex('locations_canonical_area_key_unique').on(table.canonicalAreaKey)]
 );

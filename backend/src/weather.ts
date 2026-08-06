@@ -1,4 +1,12 @@
 export class WeatherProviderError extends Error {}
+export class AreaResolutionError extends Error {}
+
+export interface ForecastArea {
+    key: string;
+    name: string;
+    latitude: number;
+    longitude: number;
+}
 
 interface ForecastPayload {
     code?: number;
@@ -196,6 +204,27 @@ export class SingaporeWeatherClient {
             userAgent?: string;
         } = {}
     ) {}
+
+    async resolveForecastArea(latitude: number, longitude: number): Promise<ForecastArea> {
+        try {
+            const payload = await this.fetchLatestForecastPayload();
+            if (payload.code !== undefined && payload.code !== 0) {
+                throw new Error(payload.errorMsg ?? 'Forecast provider returned an error');
+            }
+            const metadata = (payload.data ?? payload).area_metadata ?? [];
+            const area = nearestArea(metadata, latitude, longitude);
+            if (!area) throw new Error('Forecast response has no supported areas');
+            return {
+                key: area.key,
+                name: area.name,
+                latitude: area.latitude,
+                longitude: area.longitude,
+            };
+        } catch (error) {
+            if (error instanceof AreaResolutionError) throw error;
+            throw new AreaResolutionError('Unable to resolve a Singapore forecast area');
+        }
+    }
 
     async getCurrentWeather(latitude: number, longitude: number): Promise<WeatherSnapshot> {
         const nullReading = { value: null, timestamp: null };
@@ -574,12 +603,12 @@ export class SingaporeWeatherClient {
     }
 }
 
-function nearestAreaName(
+function nearestArea(
     areaMetadata: AreaMetadata[],
     latitude: number,
     longitude: number
-): string | null {
-    let nearest: { name: string; distance: number } | null = null;
+): (ForecastArea & { distance: number }) | null {
+    let nearest: (ForecastArea & { distance: number }) | null = null;
 
     for (const area of areaMetadata) {
         const lat = Number(area.label_location?.latitude);
@@ -588,11 +617,30 @@ function nearestAreaName(
 
         const distance = (lat - latitude) ** 2 + (lon - longitude) ** 2;
         if (!nearest || distance < nearest.distance) {
-            nearest = { name: area.name, distance };
+            nearest = {
+                key: canonicalAreaKey(area.name),
+                name: area.name,
+                latitude: lat,
+                longitude: lon,
+                distance,
+            };
         }
     }
 
-    return nearest?.name ?? null;
+    return nearest;
+}
+
+function nearestAreaName(areaMetadata: AreaMetadata[], latitude: number, longitude: number) {
+    return nearestArea(areaMetadata, latitude, longitude)?.name ?? null;
+}
+
+export function canonicalAreaKey(name: string): string {
+    return name
+        .normalize('NFKD')
+        .toLowerCase()
+        .trim()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-|-$/g, '');
 }
 
 function nearestRegionName(

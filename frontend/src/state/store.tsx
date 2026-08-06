@@ -14,6 +14,7 @@ export function StoreProvider({ children }: ProviderProps) {
     const [locations, setLocations] = useState<Location[]>([]);
     const [selectedId, setSelectedId] = useState<number | null>(null);
     const [isAdding, setIsAdding] = useState(false);
+    const [isCreating, setIsCreating] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
     const [refreshingId, setRefreshingId] = useState<number | null>(null);
     const [error, setError] = useState<unknown>(null);
@@ -46,27 +47,32 @@ export function StoreProvider({ children }: ProviderProps) {
 
     const create = useCallback(
         async (payload: CreateLocationPayload) => {
+            setIsCreating(true);
             setError(null);
-            logInteraction('location_create_submitted', payload);
+            logInteraction('location_create_submitted', { stage: 'server' });
             try {
                 const created = await createLocation(payload);
-                const next = await load();
-                const targetId = created?.id ?? next[next.length - 1]?.id;
-                if (targetId) setSelectedId(targetId);
+                setSelectedId(created.id);
+                await load();
                 setIsAdding(false);
                 logInteraction('location_created', {
-                    locationId: targetId,
-                    latitude: created.latitude,
-                    longitude: created.longitude,
+                    locationId: created.id,
+                    resolvedArea: created.canonical_area_name,
+                    outcome:
+                        created.weather.source === 'not-refreshed'
+                            ? 'saved_weather_unavailable'
+                            : 'saved',
                 });
+                return created;
             } catch (err) {
                 setError(err);
                 logInteraction('location_create_failed', {
-                    latitude: payload.latitude,
-                    longitude: payload.longitude,
-                    error: err instanceof Error ? err.message : 'Unknown error',
+                    stage: 'server',
+                    outcome: 'failed',
                 });
                 throw err;
+            } finally {
+                setIsCreating(false);
             }
         },
         [load]
@@ -115,6 +121,7 @@ export function StoreProvider({ children }: ProviderProps) {
         locations,
         selectedId: effectiveSelectedId,
         isAdding,
+        isCreating,
         isLoading,
         refreshingId,
         error,

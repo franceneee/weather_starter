@@ -3,7 +3,11 @@ import express from 'express';
 import pinoHttpModule from 'pino-http';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { createLocationsRouter, type WeatherClient } from './routes/locations.js';
+import {
+    createLocationsRouter,
+    type AreaResolver,
+    type WeatherClient,
+} from './routes/locations.js';
 import { logger } from './logger.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -14,6 +18,7 @@ interface AppOptions {
     serveFrontend?: boolean;
     enableRequestLogging?: boolean;
     weatherClient?: WeatherClient;
+    areaResolver?: AreaResolver;
 }
 
 export async function createApp(options: AppOptions = {}) {
@@ -57,7 +62,13 @@ export async function createApp(options: AppOptions = {}) {
         response.status(204).end();
     });
 
-    app.use('/api', createLocationsRouter({ weatherClient: options.weatherClient }));
+    app.use(
+        '/api',
+        createLocationsRouter({
+            weatherClient: options.weatherClient,
+            areaResolver: options.areaResolver,
+        })
+    );
 
     if (serveFrontend) {
         if (process.env.NODE_ENV === 'production') {

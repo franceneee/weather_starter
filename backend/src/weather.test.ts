@@ -205,6 +205,46 @@ describe('SingaporeWeatherClient', () => {
         });
     });
 
+    describe('resolveForecastArea', () => {
+        it('returns the nearest canonical forecast area and its provider coordinates', async () => {
+            vi.stubGlobal(
+                'fetch',
+                makeFetch({
+                    'two-hr-forecast': {
+                        code: 0,
+                        data: {
+                            area_metadata: [
+                                {
+                                    name: 'Ang Mo Kio',
+                                    label_location: { latitude: 1.375, longitude: 103.839 },
+                                },
+                                {
+                                    name: 'Bishan',
+                                    label_location: { latitude: 1.3508, longitude: 103.839 },
+                                },
+                            ],
+                        },
+                    },
+                })
+            );
+
+            const area = await new SingaporeWeatherClient().resolveForecastArea(1.351, 103.84);
+            expect(area).toEqual({
+                key: 'bishan',
+                name: 'Bishan',
+                latitude: 1.3508,
+                longitude: 103.839,
+            });
+        });
+
+        it('fails when the provider cannot supply canonical area metadata', async () => {
+            vi.stubGlobal('fetch', makeFetch({ 'two-hr-forecast': { code: 0, data: {} } }));
+            await expect(
+                new SingaporeWeatherClient().resolveForecastArea(LAT, LON)
+            ).rejects.toMatchObject({ message: 'Unable to resolve a Singapore forecast area' });
+        });
+    });
+
     describe('fetchNearestReading', () => {
         it('picks the nearest station by coordinates', async () => {
             vi.stubGlobal(
