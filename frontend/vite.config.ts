@@ -7,12 +7,12 @@ import { fileURLToPath } from 'node:url';
 const frontendRoot = dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
-  plugins: [
-    react(),
-    frontmanPlugin({
-      host: 'api.frontman.sh',
-      projectRoot: frontendRoot,
-      sourceRoot: frontendRoot,
-    }) as PluginOption,
-  ],
+    plugins: [
+        react(),
+        frontmanPlugin({
+            host: 'api.frontman.sh',
+            projectRoot: frontendRoot,
+            sourceRoot: frontendRoot,
+        }) as PluginOption,
+    ],
 });

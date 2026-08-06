@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.vite/
+coverage/
+backend/data/
+backend/logs/
+backend/*.db
+backend/*.db-shm
+backend/*.db-wal
+package-lock.json
