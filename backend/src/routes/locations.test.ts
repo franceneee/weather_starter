@@ -70,9 +70,136 @@ describe('locations API', () => {
         getWeather = async () => weather;
     });
 
+    async function createBishan() {
+        return request(app)
+            .post('/api/locations')
+            .send({ latitude: 1.35, longitude: 103.84 })
+            .expect(201);
+    }
+
     afterAll(async () => {
         closeStore();
         await rm(tempDir, { recursive: true, force: true });
+    });
+
+    it('reports service health', async () => {
+        const response = await request(app).get('/health').expect(200);
+
+        expect(response.body).toEqual({ status: 'healthy' });
+    });
+
+    it('accepts valid frontend interaction logs', async () => {
+        await request(app)
+            .post('/api/logs')
+            .send({ event: 'location.opened', metadata: { source: 'sidebar' }, page: '/' })
+            .expect(204);
+    });
+
+    it('rejects malformed frontend interaction log events', async () => {
+        const response = await request(app)
+            .post('/api/logs')
+            .send({ event: 'Invalid Event' })
+            .expect(422);
+
+        expect(response.body).toEqual({ detail: 'event is required' });
+    });
+
+    it('lists saved locations', async () => {
+        await createBishan();
+
+        const response = await request(app).get('/api/locations').expect(200);
+
+        expect(response.body.locations).toHaveLength(1);
+        expect(response.body.locations[0]).toMatchObject({
+            id: 1,
+            canonical_area_key: 'bishan',
+            canonical_area_name: 'Bishan',
+        });
+    });
+
+    it('gets a saved location by id', async () => {
+        await createBishan();
+
+        const response = await request(app).get('/api/locations/1').expect(200);
+
+        expect(response.body).toMatchObject({
+            id: 1,
+            canonical_area_key: 'bishan',
+            weather: { condition: 'Cloudy' },
+        });
+    });
+
+    it('returns 404 when getting an unknown location', async () => {
+        const response = await request(app).get('/api/locations/999').expect(404);
+
+        expect(response.body).toEqual({ detail: 'Location not found' });
+    });
+
+    it('deletes a saved location', async () => {
+        await createBishan();
+
+        await request(app).delete('/api/locations/1').expect(204);
+        await request(app).get('/api/locations/1').expect(404);
+
+        const list = await request(app).get('/api/locations').expect(200);
+        expect(list.body.locations).toHaveLength(0);
+    });
+
+    it('returns 404 when deleting an unknown location', async () => {
+        const response = await request(app).delete('/api/locations/999').expect(404);
+
+        expect(response.body).toEqual({ detail: 'Location not found' });
+    });
+
+    it('refreshes a saved location with canonical coordinates', async () => {
+        await createBishan();
+        getWeather = async (latitude, longitude) => {
+            expect(latitude).toBe(bishan.latitude);
+            expect(longitude).toBe(bishan.longitude);
+            return { ...weather, condition: 'Sunny', temperature_c: 31 };
+        };
+
+        const response = await request(app).post('/api/locations/1/refresh').expect(200);
+
+        expect(response.body).toMatchObject({
+            id: 1,
+            weather: { condition: 'Sunny', temperature_c: 31 },
+        });
+        const persisted = await request(app).get('/api/locations/1').expect(200);
+        expect(persisted.body.weather).toMatchObject({ condition: 'Sunny', temperature_c: 31 });
+    });
+
+    it('returns 404 when refreshing an unknown location', async () => {
+        const response = await request(app).post('/api/locations/999/refresh').expect(404);
+
+        expect(response.body).toEqual({ detail: 'Location not found' });
+    });
+
+    it('returns 502 when the weather provider fails during refresh', async () => {
+        await createBishan();
+        getWeather = async () => {
+            throw new WeatherProviderError('Weather provider unavailable');
+        };
+
+        const response = await request(app).post('/api/locations/1/refresh').expect(502);
+
+        expect(response.body).toEqual({ detail: 'Weather provider unavailable' });
+    });
+
+    it('rejects missing coordinates before area resolution', async () => {
+        let called = false;
+        resolveArea = async () => {
+            called = true;
+            return bishan;
+        };
+
+        const response = await request(app)
+            .post('/api/locations')
+            .send({ latitude: 1.35 })
+            .expect(422);
+
+        expect(response.body).toEqual({ detail: 'latitude and longitude are required' });
+        expect(called).toBe(false);
     });
 
     it('persists canonical identity and coordinates rather than precise device coordinates', async () => {
